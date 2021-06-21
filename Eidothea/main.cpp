@@ -1,305 +1,296 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string>
 #include <vector>
-#include <iostream>  
+#include <iostream>
 #include <process.h>
-#include <Windows.h>
-using namespace std;
 #include <time.h>
-#include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
-#include <opencv2/imgproc/imgproc.hpp>
+#include <Windows.h>
 
-#include "Profiles.h"
-#include "Camera.h"
+#include "Scaner.h"
 
-char path_to_difference_pix[] = "calibration_distance/*png";
+#define PI 3.14159265359
 
-void clear_file(std::ofstream &out) //Костыль
+/// Параметры для калибровки лазера
+double start = 0.15;  // Дистанция S, с которой начаты измерения
+float step = 0.05;  // Шаг измерений
+/// Пути к различным папкам, которые лежат в корне программы
+char name_folder_for_laser_calibration[] = "Pictures for calibration laser/*png"; //Для калибровки лазера
+char path_to_original_file[] = "original.csv"; //Тестовый файл без деформации
+char path_to_deformation_file[] = "deformation.csv"; //Тестовый файл с деформацией
+
+//Для очистки файла перед записью. Сделал это очень давно, без этого не работает, надо исправить
+void clear_file(std::ofstream &out)
 {
 	out.open("test_2021.csv", std::ios::out);
 	out.close();
 }
-
-extern "C" {
+extern "C" {  //Для симуляции
 #include "extApi.h"
 }
 
-#define PI 3.14159265359
+///Эта функция берет текущие дату и время и преобразывает их в строку для наименования файлов (скрины, облака точек)
+char buffer[80];
+char* current_time()
+{
+	time_t rawtime;
+	struct tm * timeinfo;
+	char *buff2 = buffer;
+	time(&rawtime);
+	timeinfo = localtime(&rawtime);
+	strftime(buff2, 80, "%d%m%y%H%M%S", timeinfo);
+	return (buff2);
+}
 
 int main()
 {
-	int clientID = simxStart("127.0.0.1", 19997, true, true, 5000, 5);
-	int simRes = simxStartSimulation(clientID, simx_opmode_oneshot);
-	printf("simRes is %d", simRes);
-
-	if (clientID != -1)
-	{
-		printf("success\n");
-		//simxSynchronous(clientID, true);
-	}
-
-	else
-	{
-		printf("error");
-	}
-
-	simxInt camera;
-	simxGetObjectHandle(clientID, "Vision_sensor", &camera, simx_opmode_blocking);
-	simxInt resolution[2];
-	simxUChar * image = 0;
-	std::cout << "VISION_SENSOR_HANDLE: " << camera << std::endl;
+	//Начальные параметры
+	std::string command;
+	int clientID;
+	int simRes;
 
 	simxInt AUV;
-	simxGetObjectHandle(clientID, "AUV", &AUV, simx_opmode_blocking);
-	std::cout << "AUV_HANDLE: " << AUV << std::endl;
-	float position[3];
-	float orientation[3];
+	simxInt cuboid0;
+	simxInt Laser;
 
-	Profiles find(0.071);
-	int sTime = extApi_getTimeInMs();
-	cv::namedWindow("opencv test", cv::WINDOW_AUTOSIZE);
+	simxInt camera;
+	simxInt resolution[2];
+	simxUChar * image = 0;
+	double center_y;
 
-	cv::Mat image_vrep = cv::imread("D:/Test_vrep/One/1.png");
-	double center_y = image_vrep.rows / 2;
-	double start = 0.25;
-	float step = 0.05;
-	find.calculate_m_b(center_y, &start, step, path_to_difference_pix);
+	float position[3]; //переменная для хранения текущей позиции
+	float orientation[3]; //переменная для хранения текущей ориентации
+	char filename[100];
+	std::string s_name_file;
+	short count_of_frame = 1; //счетчик кадров
+	//Создание объекта класса find. 0.071 - расстояние между лазером и камерой
+	Scaner scan(0.071);
 
-	vector<cv::Point3d>cloud_point_2020;
-	char name_file[] = "test_2021_vrep_4.csv";
-	std::ofstream outData(name_file);
-	clear_file(outData);
+	//Файл для записи облака точек
+	std::vector<cv::Point3d> cloud_point_2020;
 
-	while (true)
+	while (true) //Программа отправляет различные команды симуляции. Подробнее команды расписаны в инструкции в корне программы
 	{
-		simxGetObjectPosition(clientID, AUV, -1, position, simx_opmode_oneshot_wait);
-		simxGetObjectOrientation(clientID, AUV, -1, orientation, simx_opmode_oneshot_wait);
+		//Считывание команды от пользователя в вектор типа string
+		std::cout << "Enter the command: ";
+		std::getline(std::cin, command);
+		std::istringstream iss(command);
+		std::vector<std::string> results((std::istream_iterator<std::string>(iss)),
+			std::istream_iterator<std::string>());
 
-		int retval = simxGetVisionSensorImage(clientID, camera, resolution, &image, 0, simx_opmode_oneshot_wait);
-		//std::cout << "retval: " << retval << std::endl;
-		if (retval != simx_return_ok) {
-			continue;
-		}
-		cv::Mat channel(resolution[0], resolution[1], CV_8UC3, image);
-		cv::flip(channel, channel, 0);
-		cv::cvtColor(channel, channel, cv::COLOR_RGB2BGR);
-		cv::resize(channel, channel, cv::Size(1280, 720));
-		cv::imshow("opencv test", channel);
 
-		find.Scan_frame(channel, center_y);
-		find.create_profiles(cloud_point_2020, position[0], position[1], position[2],
-			0, 0, 0);
-
-		if (cv::waitKey(10) == 'q')
+		//Старт симуляции
+		if ((results.at(0) == "Start") && (results.size() == 1))
 		{
-			std::cout << "Exit..." << std::endl;
-			Sleep(100);
+			clientID = simxStart("127.0.0.1", 19997, true, true, 5000, 5);
+			simRes = simxStartSimulation(clientID, simx_opmode_oneshot);
+			printf("simRes is %d", simRes);
+			if (clientID != -1) { printf("Start success\n"); }
+			else { printf("Error ClientID"); }
+
+			//Тут программа получает handle объектов симуляции. Следует переименовать их, если у вас другие названия
+			simxGetObjectHandle(clientID, "Vision_sensor", &camera, simx_opmode_blocking);
+			simxGetObjectHandle(clientID, "AUV", &AUV, simx_opmode_blocking);
+			simxGetObjectHandle(clientID, "Cuboid0", &cuboid0, simx_opmode_blocking);
+			std::cout << "VISION_SENSOR_HANDLE: " << camera << std::endl;
+			std::cout << "AUV_HANDLE: " << AUV << std::endl;
+		}
+
+
+		// Приостановка симуляции
+		else if ((results.at(0) == "Pause") && (results.size() == 1))
+		{
+			std::cout << "Pause simulation..." << std::endl;
+			simRes = simxPauseSimulation(clientID, simx_opmode_oneshot);
+			printf("simRes is %d", simRes);
+		}
+
+
+		// Остановка симуляции и выключение программы
+		else if ((results.at(0) == "Stop") && (results.size() == 1))
+		{
+			std::cout << "Stop simulation" << std::endl;
+			simRes = simxStopSimulation(clientID, simx_opmode_oneshot);
+			simxFinish(clientID);
+			printf("simRes is %d", simRes);
+			std::cout << "Programm is stopped" << std::endl;
 			break;
 		}
 
-		//std::cout << "X: " << position[0] << " Y: " << position[1] << " Z: " << position[2]
-		//	      << " Alp: " << (orientation[0]*180)/PI  << " Bet: " << (orientation[1]*180)/PI 
-		//	      << " Ya: "  << (orientation[2]*180)/PI  << std::endl;
 
-		//printf("Time: %d\n", extApi_getTimeInMs()); // Mouse position x is actualized when the cursor is over V-REP's window
+		///Получение одного кадра с камеры
+		else if ((results.at(0) == "Frame") && (results.size() == 1))
+		{
+			simxGetVisionSensorImage(clientID, camera, resolution, &image, 0, simx_opmode_oneshot_wait);
+			cv::Mat channel(resolution[0], resolution[1], CV_8UC3, image);
+			cv::flip(channel, channel, 0);
+			cv::cvtColor(channel, channel, cv::COLOR_RGB2BGR);
+			s_name_file = name_folder_for_laser_calibration; // Кадр сохраняется в папку для калибровки лазера
+			s_name_file += current_time();
+			s_name_file += ".png";
+			const char *sc_name_file_one_frame = s_name_file.c_str();
+			sprintf_s(filename, sc_name_file_one_frame);
+			cv::imwrite(filename, channel);
+			std::cout << "Frame was get and save in " << name_folder_for_laser_calibration << std::endl;
+		}
+
+
+		/// Калибровка камеры и лазера
+		else if ((results.at(0) == "Calibration") && (results.size() == 1))
+		{
+			simxGetVisionSensorImage(clientID, camera, resolution, &image, 0, simx_opmode_oneshot_wait);
+
+			cv::Mat channel(resolution[0], resolution[1], CV_8UC3, image);
+			cv::flip(channel, channel, 0);
+			cv::cvtColor(channel, channel, cv::COLOR_RGB2BGR);
+
+			//Сохранение оригинального изображения в папку Calibration_file
+			s_name_file = "Results/HSV_mask/";
+			s_name_file += current_time();
+			s_name_file += "_original.png";
+			const char *sc_name_file_orig = s_name_file.c_str();
+			sprintf_s(filename, sc_name_file_orig);
+			cv::imwrite(filename, channel);
+
+			//Получение парметров HSV для текущей сцены
+			scan.Find_HSV_Parameters(channel);
+			std::cout << "HSV_low_mask: " << scan.get_min_h() << " " << scan.get_min_s() << " " << scan.get_min_v() << std::endl;
+			std::cout << "HSV_high_mask: " << scan.get_max_h() << " " << scan.get_max_s() << " " << scan.get_max_v() << std::endl;
+
+			//Сохранение маски изображения в папку Calibration_file
+			cv::Mat			hsv;
+			cv::Mat			mask;
+			cv::Scalar		hsv_l(scan.get_min_h(), scan.get_min_s(), scan.get_min_v());
+			cv::Scalar		hsv_h(scan.get_max_h(), scan.get_max_s(), scan.get_max_v());
+			cv::cvtColor(channel, hsv, cv::COLOR_BGR2HSV);
+			cv::inRange(hsv, hsv_l, hsv_h, mask);
+
+			s_name_file = "Results/HSV_mask/";
+			s_name_file += current_time();
+			s_name_file += "_hsv.png";
+			const char *sc_name_file_hsv = s_name_file.c_str();
+			sprintf_s(filename, sc_name_file_hsv);
+			cv::imwrite(filename, mask);
+
+			//Калибровка лазера (вычисление коэффициентов для расчета дальности и ширины сцены)
+			center_y = channel.rows / 2;
+			scan.calibration_laser(center_y, &start, step, name_folder_for_laser_calibration, channel.cols);
+			std::cout << "m: " << scan.get_m() << ", b: " << scan.get_b() << std::endl;
+			std::cout << "a_MNK: " << scan.get_a_MNK() << ", b_MNK: " << scan.get_b_MNK() << std::endl;
+		}
+
+		//Команда для сканирования одного кадра
+		else if ((results.at(0) == "Scan") && (results.at(1) == "one") && (results.at(2) == "frame"))
+		{
+			simxGetObjectPosition(clientID, AUV, -1, position, simx_opmode_oneshot_wait);
+			simxGetObjectOrientation(clientID, AUV, -1, orientation, simx_opmode_oneshot_wait);
+			simxGetVisionSensorImage(clientID, camera, resolution, &image, 0, simx_opmode_oneshot_wait);
+
+			//Можно вывести в консоль данные о позиции и ориентации НПА
+			//std::cout << "X: " << position[0] << "\tY: " << position[1] << "\tZ: " << position[2]
+			//		  << "\tAlp: " << (orientation[0]*180)/PI << "\tBet: " << (orientation[1]*180)/PI
+			//		  << "\tYa: "  << (orientation[2]*180)/PI  << std::endl;
+
+			//Получаем кадр с камеры и сохраняем его в папку Results
+			cv::Mat channel(resolution[0], resolution[1], CV_8UC3, image);
+			cv::flip(channel, channel, 0);
+			cv::cvtColor(channel, channel, cv::COLOR_RGB2BGR);
+			s_name_file = "Results/Scan_one_frame/";
+			s_name_file += current_time();
+			s_name_file += ".png";
+			const char *sc_name_file_one_frame = s_name_file.c_str();
+			sprintf_s(filename, sc_name_file_one_frame);
+			cv::imwrite(filename, channel);
+
+			//C таким же именем сохраняется облако точек после сканирования 
+			s_name_file = "Results/Scan_one_frame/";
+			s_name_file += current_time();
+			s_name_file += "_cloud.csv";
+			const char *name_file_cloud = s_name_file.c_str();
+			std::ofstream outData(name_file_cloud);
+			clear_file(outData);
+
+			//Процесс сканирования
+			scan.Scan_frame(channel, center_y, channel.cols, channel.rows);
+			scan.create_profiles(cloud_point_2020, position[0],    position[1],    position[2],
+												   orientation[0], orientation[1], orientation[2]);
+			scan.safe_cloud(outData, name_file_cloud);
+
+			//В результате работы функции в папку Results сохраняется кадр с камеры и облако точек в глобальной системе координат
+		}
+
+		//Непрерывное сканирование с указанием скорости НПА
+		else if ((results.at(0) == "Start") && (results.at(1) == "scan"))
+		{
+			float vel = std::stod(results.at(2)); //Получаем значение скорости
+			simxSetFloatSignal(clientID, "velocity", vel, simx_opmode_oneshot); //Отправляем в симуляцию
+
+			while (true)
+			{
+				///Аналогичный вышеописанному процесс сканирования, но без сохранения кадров и с выводом изображения на экран
+				simxGetObjectPosition(clientID, AUV, -1, position, simx_opmode_oneshot_wait);
+				simxGetObjectOrientation(clientID, AUV, -1, orientation, simx_opmode_oneshot_wait);
+				simxGetVisionSensorImage(clientID, camera, resolution, &image, 0, simx_opmode_oneshot_wait);
+
+				/*std::cout << "X: " << position[0] << "\tY: " << position[1] << "\tZ: " << position[2]
+						  << "\tAlp: " << (orientation[0]*180)/PI << "\tBet: " << (orientation[1]*180)/PI
+						  << "\tYa: "  << (orientation[2]*180)/PI  << std::endl;*/
+
+				cv::Mat channel(resolution[0], resolution[1], CV_8UC3, image);
+				cv::flip(channel, channel, 0);
+				cv::cvtColor(channel, channel, cv::COLOR_RGB2BGR);
+				cv::imshow("Eidothea scan", channel);
+
+				scan.Scan_frame(channel, center_y, channel.cols, channel.rows);
+				scan.create_profiles(cloud_point_2020, position[0],    position[1],    position[2],
+													   orientation[0], orientation[1], orientation[2]);
+
+				count_of_frame++;
+
+				//Если нажата клавиша q на окне с трансляцией кадров, прекратить сканирование. 
+				//По хорошему надо переделать в несколько потоков, видео в одном потоке, обработка в другом
+				//После прерывания сканирования скорость НПА становится 0, а программа сохранит результат в файле .csv в папке Results
+				if (cv::waitKey(10) == 'q')
+				{
+					//ПЕРЕДЕЛАТЬ
+					cv::destroyWindow("Eidothea scan");
+
+					s_name_file = "Results/Continuous_scan/";
+					s_name_file += current_time();
+					s_name_file += "_cloud.csv";
+					const char *name_file_cloud = s_name_file.c_str();
+					std::ofstream outData(name_file_cloud);
+					clear_file(outData);
+
+					simxSetFloatSignal(clientID, "velocity", float(0.00), simx_opmode_oneshot);
+					scan.safe_cloud(outData, name_file_cloud);
+
+					//Дополнительно полученное облако можно сразу триангулировать
+					//find.triangul();
+					//char name_file_2[] = "test_2021_vrep_11.obj";
+					//std::ofstream outData_2(name_file_2);
+					//clear_file(outData_2);
+					//find.safe(outData_2, name_file_2);
+
+					std::cout << "Total scan frame: " << count_of_frame << std::endl;
+					count_of_frame = 1;
+					std::cout << "Exit..." << std::endl;
+					Sleep(100);
+					break;
+				}
+			}
+		}
+
+		//Начал прорабатывать тему с автоматическим поиском деформации. Это функция для поиска деформации на основе разницы по z.
+		//Работает некорректно
+		else if ((results.at(0) == "Find") && (results.at(1) == "deformation"))
+		{
+			s_name_file = "deformation_point.csv";
+			const char *name_file_cloud = s_name_file.c_str();
+			std::ofstream outData(name_file_cloud);
+			clear_file(outData);
+			scan.find_deformation(path_to_original_file, path_to_deformation_file, 0.01, outData, name_file_cloud);
+		}
 	}
-
-	find.safe_cloud(outData, name_file);
-
-	find.triangul();
-	char name_file_2[] = "test_2021_vrep_4.obj";
-	std::ofstream outData_2(name_file_2);
-	clear_file(outData_2);
-	find.safe(outData_2, name_file_2);
-
-	simxStopSimulation(clientID, simx_opmode_oneshot);
-	simxFinish(clientID);
 	return 0;
 }
-
-
-//#include <stdio.h>
-//#include <stdlib.h>
-//#include <vector>
-//#include <iostream>  
-//#include <process.h>
-//#include <Windows.h>
-//using namespace std;
-//#include <time.h>
-//#include <opencv2/core/core.hpp>
-//#include <opencv2/highgui/highgui.hpp>
-//#include <opencv2/imgproc/imgproc.hpp>
-//
-//extern "C" {
-//#include "extApi.h"
-//}
-//
-//int main()
-//{
-//	int clientID = simxStart("127.0.0.1", 19997, true, true, 5000, 5);
-//
-//
-//	if (clientID != -1)
-//	{
-//		printf("success");
-//	}
-//	else
-//	{
-//		printf("error");
-//	}
-//	simxStartSimulation(clientID, simx_opmode_oneshot);
-//
-//	//simxInt leftmotor;
-//	//simxInt rightmotor;
-//	//simxGetObjectHandle(clientID, "Leftmotor", &leftmotor,simx_opmode_blocking);
-//	//simxGetObjectHandle(clientID, "Rightmotor", &rightmotor, simx_opmode_blocking);
-//	simxInt camera;
-//	simxGetObjectHandle(clientID, "Vision_sensor", &camera, simx_opmode_blocking);
-//	simxInt resolution[2];
-//	simxUChar * image = 0;
-//	//cv::namedWindow("opencv test", cv::WINDOW_AUTOSIZE);
-//
-//
-//	//if (clientID != -1)
-//	//{
-//	//	cout << " Connection status to VREP: SUCCESS" << endl;
-//	//	simxInt syncho = simxSynchronous(clientID, 1);
-//	//	int start = simxStartSimulation(clientID, simx_opmode_oneshot_wait);
-//	//}
-//
-//	for (int time = 0; time < 10000; time++) {
-//		//Sleep(1000);
-//		//simxSetJointTargetVelocity(clientID, leftmotor, -time*0.02, simx_opmode_oneshot);
-//		//simxSetJointTargetVelocity(clientID, rightmotor, -time*0.03, simx_opmode_oneshot);
-//
-//		int retval = simxGetVisionSensorImage(clientID, camera, resolution, &image, 0, simx_opmode_oneshot);
-//		if (retval != simx_return_ok) {
-//			continue;
-//		}
-//		cv::Mat channel(resolution[0], resolution[1], CV_8UC3, image);
-//		//The image data read back is flipped vertically, the problem should be that the direction of the vertical coordinate axis of cvMat and v-rep is opposite, and the flip is normal
-//		cv::flip(channel, channel, 0);
-//		//The rgb channel is distributed when the image data read back, and cvMat defaults to bgr
-//		cv::cvtColor(channel, channel, cv::COLOR_RGB2BGR);
-//		cv::resize(channel, channel, cv::Size(1280, 720));
-//		if (time == 4000)
-//		{
-//			cv::imwrite("1.png", channel);
-//		}
-//		//count_frame += 1;
-//		std::cout << time << std::endl;
-//		//cv::imshow("opencv test", channel);
-//		//cv::waitKey(10);
-//	}
-//	simxStopSimulation(clientID, simx_opmode_oneshot);
-//	simxFinish(clientID);
-//	return 0;
-//}
-
-//#include <Windows.h>
-//#include <iostream>
-//#include <stdio.h>
-//#include <stdlib.h>
-//
-//
-//extern "C" {
-//#include "extApi.h"
-//}
-//
-//using namespace std;
-//#define PI 3.14
-//int main()
-//{
-//	bool VERBOSE = true;
-//	int clientID = 0;
-//	int leftmotorHandle = 0;
-//	int rightmotorHandle = 0;
-//
-//	int lbrJoint1 = 0;
-//	int lbrJoint2 = 0;
-//	int lbrJoint3 = 0;
-//	int lbrJoint4 = 0;
-//	int lbrJoint5 = 0;
-//	int lbrJoint6 = 0;
-//	int lbrJoint7 = 0;
-//
-//	int counter = 0;
-//
-//	//! Todo Naresh: check to run this in parallel with real robot driver. May need to integrate my planner
-//	bool WORK = true;
-//	simxFinish(-1);                                                     //! Close any previously unfinished business
-//	clientID = simxStart((simxChar*)"127.0.0.1", 19000, true, true, 5000, 5);  //!< Main connection to V-REP
-//	Sleep(1);
-//	if (clientID != -1)
-//	{
-//		cout << " Connection status to VREP: SUCCESS" << endl;
-//		simxInt syncho = simxSynchronous(clientID, 1);
-//		int start = simxStartSimulation(clientID, simx_opmode_oneshot_wait);
-//		int TEST1 = simxGetObjectHandle(clientID, "Pioneer_p3dx_leftMotor", &leftmotorHandle, simx_opmode_oneshot_wait);
-//		int TEST2 = simxGetObjectHandle(clientID, "Pioneer_p3dx_rightMotor", &rightmotorHandle, simx_opmode_oneshot_wait);
-//
-//		simxGetObjectHandle(clientID, "LBR_iiwa_14_R820_joint1", &lbrJoint1, simx_opmode_oneshot_wait);
-//		simxGetObjectHandle(clientID, "LBR_iiwa_14_R820_joint2", &lbrJoint2, simx_opmode_oneshot_wait);
-//		simxGetObjectHandle(clientID, "LBR_iiwa_14_R820_joint3", &lbrJoint3, simx_opmode_oneshot_wait);
-//		simxGetObjectHandle(clientID, "LBR_iiwa_14_R820_joint4", &lbrJoint4, simx_opmode_oneshot_wait);
-//		simxGetObjectHandle(clientID, "LBR_iiwa_14_R820_joint5", &lbrJoint5, simx_opmode_oneshot_wait);
-//		simxGetObjectHandle(clientID, "LBR_iiwa_14_R820_joint6", &lbrJoint6, simx_opmode_oneshot_wait);
-//		simxGetObjectHandle(clientID, "LBR_iiwa_14_R820_joint7", &lbrJoint7, simx_opmode_oneshot_wait);
-//
-//		if (VERBOSE)
-//		{
-//			cout << "Computed object handle: " << TEST1 << "  " << leftmotorHandle << endl;
-//			cout << "Computed object handle: " << TEST2 << "  " << rightmotorHandle << endl;
-//		}
-//
-//		//        simxPauseCommunication(clientID,true);
-//		simxSetJointTargetPosition(clientID, lbrJoint1, 0.0, simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint2, 0.0, simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint3, 0.0, simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint4, 0.0, simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint5, 0.0, simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint6, 0.0, simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint7, 0.0, simx_opmode_oneshot_wait);
-//		//        simxPauseCommunication(clientID,false);
-//
-//		cout << "At Second Block..." << endl;
-//
-//		//        simxPauseCommunication(clientID,1);
-//		simxSetJointTargetPosition(clientID, lbrJoint1, 90.0* (PI / 180), simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint2, 90.0* (PI / 180), simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint3, 170.0* (PI / 180), simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint4, -90.0* (PI / 180), simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint5, 90.0* (PI / 180), simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint6, 90.0* (PI / 180), simx_opmode_oneshot_wait);
-//		simxSetJointTargetPosition(clientID, lbrJoint7, 0.0* (PI / 180), simx_opmode_oneshot_wait);
-//		//        simxPauseCommunication(clientID,0);
-//
-//		//        float joint2 = 1;
-//		//        //simxSetJointTargetVelocity(clientID, lbrJoint2, 0.1, simx_opmode_oneshot_wait);
-//		//        while (simxGetConnectionId(clientID)!=-1  && WORK)              ///**<  while we are connected to the server.. */
-//		//        {
-//		////            simxSetJointTargetVelocity(clientID, leftmotorHandle, 0.2, simx_opmode_oneshot_wait);
-//		////            simxSetJointTargetVelocity(clientID, rightmotorHandle, 0.2, simx_opmode_oneshot_wait);
-//		//                TEST3 = simxSetJointTargetVelocity(clientID, lbrJoint2, -0.1, simx_opmode_oneshot);
-//		////            TEST3 = simxSetJointTargetPosition(clientID, lbrJoint2, joint2 * (PI/180), simx_opmode_oneshot);
-//		//
-//		//            if(counter>1000)
-//		//            {
-//		//                simxSetJointTargetVelocity(clientID, leftmotorHandle, 0.0, simx_opmode_oneshot_wait);
-//		//                simxSetJointTargetVelocity(clientID, rightmotorHandle, 0.0, simx_opmode_oneshot_wait);
-//		//                simxSetJointTargetVelocity(clientID, lbrJoint2, 0, simx_opmode_oneshot_wait);
-//		//                break;
-//		//            }
-//		//            cout<<counter<< "  "<< TEST3<<endl;
-//		//            counter++;
-//		//            joint2 = joint2 + 0.08;
-//		//        }
-//	}
-//	else
-//	{
-//		cout << " Connection status to VREP: FAILED" << endl;
-//	}
-//	simxFinish(clientID);
-//	return clientID;
-//}

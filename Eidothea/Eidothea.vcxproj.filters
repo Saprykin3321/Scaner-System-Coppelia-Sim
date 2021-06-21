@@ -24,10 +24,7 @@
     <ClCompile Include="extApiPlatform.c">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
-    <ClCompile Include="Network.cpp">
-      <Filter>Исходные файлы</Filter>
-    </ClCompile>
-    <ClCompile Include="Profiles.cpp">
+    <ClCompile Include="Scaner.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
   </ItemGroup>
@@ -38,10 +35,7 @@
     <ClInclude Include="extApiPlatform.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
-    <ClInclude Include="Network.h">
-      <Filter>Файлы заголовков</Filter>
-    </ClInclude>
-    <ClInclude Include="Profiles.h">
+    <ClInclude Include="Scaner.h">
       <Filter>Файлы заголовков</Filter>
     </ClInclude>
   </ItemGroup>

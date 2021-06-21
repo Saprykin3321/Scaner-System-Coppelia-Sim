@@ -130,14 +130,12 @@
     <ClCompile Include="extApi.c" />
     <ClCompile Include="extApiPlatform.c" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="Network.cpp" />
-    <ClCompile Include="Profiles.cpp" />
+    <ClCompile Include="Scaner.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="extApi.h" />
     <ClInclude Include="extApiPlatform.h" />
-    <ClInclude Include="Network.h" />
-    <ClInclude Include="Profiles.h" />
+    <ClInclude Include="Scaner.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
