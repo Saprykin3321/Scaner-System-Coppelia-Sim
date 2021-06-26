@@ -90,7 +90,7 @@ public:
 	//Эта функция объединяет две выше - Find medium laser и calculate coordinate
 	double Scan_frame(cv::Mat image, double center_y, int resolution_x, int resolution_y);
 
-	//Сохранение одного профиля в СК камеры
+	//Сохранение одного профиля в глобальной СК
 	void Safe_dots(std::vector<cv::Point3d>& cloud, std::ofstream &out, const char *name);
 
 
@@ -123,6 +123,9 @@ public:
 	// Расчет нормалей (не работает)
 	void calc_normals();
 	std::vector<cv::Point3d> get_normals() { return normals; };
+
+	// Сохранение с триангуляцией в формате obj, с точками и вершинами
+	void safe_triangul(std::ofstream &out, const char *name);
 
 	// Поиск деформаций на основе разницы по высоте (не работает)
 	void find_deformation(const char *original, const char *deformation, double difference, std::ofstream &out, const char *name);

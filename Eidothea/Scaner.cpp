@@ -776,3 +776,26 @@ void Scaner::find_deformation(const char *original, const char *deformation, dou
 		//}
 	}
 }
+
+void Scaner::safe_triangul(std::ofstream &out, const char *name)
+{
+	std::ofstream	outData;
+	int				count = 1;
+
+	out.open(name, std::ios::app);
+	out << "o Object.1" << std::endl;
+	for (std::vector<Profile>::iterator it = profiles.begin(); it != profiles.end(); it++)
+	{
+		for (int i = 0; i < it->points_SSK.size(); i++)
+		{
+			out << "v " << it->points_SSK.at(i).x << " " << it->points_SSK.at(i).y << " "
+				<< it->points_SSK.at(i).z << std::endl;
+		}
+		count += 1;
+	}
+	for (int c = 0; c < surface.size(); c++)
+	{
+		out << "f " << surface.at(c).x << " " << surface.at(c).y << " " << surface.at(c).z << std::endl;
+	}
+	out.close();
+}
